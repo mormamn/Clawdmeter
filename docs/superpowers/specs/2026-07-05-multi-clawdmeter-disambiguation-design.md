@@ -64,9 +64,16 @@ Location: `firmware/src/ble.cpp`, `firmware/src/ble.h`, `firmware/src/main.cpp`.
    - `name clear` — remove the NVS key, revert to `"Clawdmeter"`, restart.
 
    **Validation** for `<value>`: trim surrounding whitespace/CR/LF; allow only
-   `[A-Za-z0-9-]`; max 12 characters (keeps the advertising packet within the
-   31-byte limit: `"Clawdmeter-"` is 11 chars). Reject invalid input with an
-   error message and do **not** store or restart.
+   `[A-Za-z0-9-]`; **max 7 characters**. Rationale: the name also rides the
+   primary advertising packet (`ble.cpp:144-152`), which is capped at 31 bytes.
+   The current layout consumes 23 bytes with `"Clawdmeter"` (flags 3 +
+   appearance 4 + HID UUID 4 + name AD 12), leaving 8 bytes of headroom; with
+   `"Clawdmeter-"` (11 chars) a 7-char suffix yields an 18-char name (20-byte
+   name AD) for exactly 31 bytes total. The **full, authoritative name** lives
+   in GAP `0x2A00` (set via `NimBLEDevice::init`, no packet limit) — that is
+   what the daemon matches on, so the 7-char cap is a cosmetic-packet constraint
+   only. Reject invalid input with an error message and do **not** store or
+   restart.
 
 4. **Interaction with the owner-lock.** None. Bonds key off the BLE MAC, not the
    name, so renaming never disturbs pairing or ownership. No owner-lock code
