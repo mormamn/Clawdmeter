@@ -239,3 +239,55 @@ def test_connect_wrong_board_name_returns_false(monkeypatch):
     assert ok is False
     client.read_gatt_char.assert_awaited_once_with(mod.DEVICE_NAME_CHAR_UUID)
     client.disconnect.assert_awaited()  # we hung up on the wrong board
+
+
+def test_connect_match_sets_preferred_uuid_and_falls_through(monkeypatch):
+    """0x2A00 == expected -> _preferred_uuid is set and we fall into the session path."""
+    client = MagicMock()
+    client.connect = AsyncMock()
+    client.disconnect = AsyncMock()
+    client.is_connected = True
+    client.read_gatt_char = AsyncMock(return_value=b"Clawdmeter-mor")
+    # Reached only after the match, inside Session.setup_refresh_subscription().
+    client.start_notify = AsyncMock()
+
+    monkeypatch.setattr(mod, "BleakClient", lambda *a, **k: client)
+
+    mod._preferred_uuid = None
+    try:
+        # Already-set stop_event so the post-match `while` loop body never
+        # runs — we're exercising the match branch, not the polling loop.
+        stop = asyncio.Event()
+        stop.set()
+
+        ok = _run(mod.connect_and_run("UUID-1", stop, expected_name="Clawdmeter-mor"))
+
+        assert mod._preferred_uuid == "UUID-1"
+        client.read_gatt_char.assert_awaited_once_with(mod.DEVICE_NAME_CHAR_UUID)
+        assert ok is False  # loop never ran, so used_successfully stays False
+        client.disconnect.assert_awaited()  # finally-block hangup on loop exit
+    finally:
+        mod._preferred_uuid = None
+
+
+def test_connect_gap_read_failure_treated_as_mismatch(monkeypatch):
+    """A 0x2A00 read failure is treated like a name mismatch: skip, don't crash."""
+    client = MagicMock()
+    client.connect = AsyncMock()
+    client.disconnect = AsyncMock()
+    client.is_connected = True
+    client.read_gatt_char = AsyncMock(side_effect=mod.BleakError("boom"))
+
+    monkeypatch.setattr(mod, "BleakClient", lambda *a, **k: client)
+
+    mod._preferred_uuid = None
+    try:
+        stop = asyncio.Event()
+
+        ok = _run(mod.connect_and_run("UUID-1", stop, expected_name="Clawdmeter-mor"))
+
+        assert ok is False
+        client.disconnect.assert_awaited()
+        assert mod._preferred_uuid is None  # never reached the match branch
+    finally:
+        mod._preferred_uuid = None
