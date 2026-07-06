@@ -35,7 +35,7 @@ clock = off
 # in the same room don't get confused for each other. Name a board over its USB
 # serial console with `name <label>` (it will advertise as Clawdmeter-<label>).
 #   - Value may be the bare label (mor) or the full name (Clawdmeter-mor).
-#   - Set (default) = the daemon only ever talks to the matching board and
-#     waits if it isn't present, rather than grabbing whichever it sees first.
+#   - Set = the daemon only ever talks to the matching board and waits if it
+#     isn't present, rather than grabbing whichever it sees first.
 #   - Unset (default) = original behavior: bind to the first Clawdmeter found.
 # device = mor
