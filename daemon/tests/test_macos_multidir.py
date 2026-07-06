@@ -218,8 +218,43 @@ def test_target_device_full_name(tmp_path, monkeypatch):
     assert mod.read_target_device() == "Clawdmeter-alice"
 
 
+def test_target_name_matchable():
+    # Unnamed board and valid 1-7 char [A-Za-z0-9-] suffixes can match.
+    assert mod._target_name_matchable("Clawdmeter") is True
+    assert mod._target_name_matchable("Clawdmeter-mor") is True
+    assert mod._target_name_matchable("Clawdmeter-a1-b2c") is True   # 5 chars
+    assert mod._target_name_matchable("Clawdmeter-1234567") is True  # exactly 7
+    # Un-matchable: too long, illegal char, empty suffix, missing hyphen.
+    assert mod._target_name_matchable("Clawdmeter-12345678") is False  # 8 chars
+    assert mod._target_name_matchable("Clawdmeter-bad_x") is False     # underscore
+    assert mod._target_name_matchable("Clawdmeter-") is False          # empty suffix
+    assert mod._target_name_matchable("Clawdmeterx") is False          # no hyphen
+
+
+def test_target_device_invalid_suffix_warns_but_returns_name(tmp_path, monkeypatch):
+    cfg = tmp_path / "config"
+    cfg.write_text("device = toolongsuffix\n")  # 13 chars -> no board can advertise it
+    monkeypatch.setattr(mod, "CONFIG_FILE", cfg)
+    logs = []
+    monkeypatch.setattr(mod, "log", lambda m: logs.append(m))
+    # Returned as-is so the daemon WAITS (never grabs the wrong board)...
+    assert mod.read_target_device() == "Clawdmeter-toolongsuffix"
+    # ...but a distinct warning is emitted rather than failing silently.
+    assert any("can't match any board" in m for m in logs)
+
+
+def test_target_device_valid_suffix_no_warning(tmp_path, monkeypatch):
+    cfg = tmp_path / "config"
+    cfg.write_text("device = mor\n")
+    monkeypatch.setattr(mod, "CONFIG_FILE", cfg)
+    logs = []
+    monkeypatch.setattr(mod, "log", lambda m: logs.append(m))
+    assert mod.read_target_device() == "Clawdmeter-mor"
+    assert logs == []  # a valid name must not trigger the warning
+
+
 # ---------------------------------------------------------------------------
-# connect_and_run — GATT 0x2A00 board confirmation
+# connect_and_run — board confirmation via custom name characteristic (…0005)
 # ---------------------------------------------------------------------------
 
 def test_connect_wrong_board_name_returns_false(monkeypatch):
@@ -237,7 +272,7 @@ def test_connect_wrong_board_name_returns_false(monkeypatch):
     ok = _run(mod.connect_and_run("UUID-1", stop, expected_name="Clawdmeter-mor"))
 
     assert ok is False
-    client.read_gatt_char.assert_awaited_once_with(mod.DEVICE_NAME_CHAR_UUID)
+    client.read_gatt_char.assert_awaited_once_with(mod.NAME_CHAR_UUID)
     client.disconnect.assert_awaited()  # we hung up on the wrong board
 
 
@@ -263,7 +298,7 @@ def test_connect_match_sets_preferred_uuid_and_falls_through(monkeypatch):
         ok = _run(mod.connect_and_run("UUID-1", stop, expected_name="Clawdmeter-mor"))
 
         assert mod._preferred_uuid == "UUID-1"
-        client.read_gatt_char.assert_awaited_once_with(mod.DEVICE_NAME_CHAR_UUID)
+        client.read_gatt_char.assert_awaited_once_with(mod.NAME_CHAR_UUID)
         assert ok is False  # loop never ran, so used_successfully stays False
         client.disconnect.assert_awaited()  # finally-block hangup on loop exit
     finally:

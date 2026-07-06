@@ -162,15 +162,20 @@ Bash daemon (`daemon/claude-usage-daemon.sh`) reads OAuth token, polls Anthropic
 - `POLL_INTERVAL=60`, `TICK=5`. Inner loop wakes every 5s to detect disconnects fast; polls Anthropic when 60s elapsed OR when ESP fires a refresh request.
 - **Per-board naming (multi-device offices).** A board can be named over USB
   serial (`name <label>` → advertises `Clawdmeter-<label>`, `name` to print,
-  `name clear` to reset; label is `[A-Za-z0-9-]`, ≤7 chars, persisted in NVS,
-  full name published as GAP `0x2A00`). Each Mac's daemon binds to one board via
-  the `device = <label>` config key: on connect it reads `0x2A00` and, on a
-  mismatch, disconnects and reuses the `skip_addr` retry path to converge on the
-  right board (and waits, rather than grabbing the wrong one, if its board is
-  absent). Unset `device` = original first-match behavior. macOS-only today.
+  `name clear` to reset; label is `[A-Za-z0-9-]`, ≤7 chars, persisted in NVS).
+  The full name is also mirrored onto a **custom readable characteristic
+  (`…0005`)** — *not* GAP `0x2A00`, because macOS CoreBluetooth hides the GAP
+  service (`0x1800`) from apps, so a daemon cannot read `0x2A00`. Each Mac's
+  daemon binds to one board via the `device = <label>` config key: on connect
+  it reads `…0005` and, on a mismatch, disconnects and reuses the `skip_addr`
+  retry path to converge on the right board (and waits, rather than grabbing
+  the wrong one, if its board is absent; a `device` value no board could
+  advertise logs a distinct warning). Unset `device` = original first-match
+  behavior. macOS-only today.
 
 **GATT characteristics on service `4c41555a-...0001`:**
 
 - `...0002` RX — daemon writes JSON usage payload here.
 - `...0003` TX — firmware notifies ack/nack (daemon doesn't subscribe).
 - `...0004` REQ — firmware fires `0x01` notify in `onSubscribe` if `has_received_data` is false. Daemon subscribes via `setsid bash -c "stdbuf -oL dbus-monitor … | awk …"`; awk drops a flag file the inner loop picks up. See the `feedback_dbus_monitor_pipe` memory for the three subtle gotchas (pipe buffering, busctl-exits race, `wait` blocking on pipeline jobs).
+- `...0005` NAME — read-only; firmware exposes the full device name (`Clawdmeter` or `Clawdmeter-<label>`) here so the daemon can disambiguate two boards. Set once at init; changing the name is a serial `name` command that restarts the board. Used instead of GAP `0x2A00` (which macOS hides).

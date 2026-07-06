@@ -155,6 +155,26 @@ Location: `daemon/claude_usage_daemon.py`, `daemon/config.example`.
 - Update `CLAUDE.md` (BLE + daemon sections) to describe per-board naming and
   the daemon `device` targeting option.
 
+## Addendum (2026-07-06): custom name characteristic instead of GAP 0x2A00
+
+The final whole-branch review caught that this design's approach ① — reading the
+GAP Device Name characteristic `0x2A00` after connecting — does **not work on
+macOS**. Apple's CoreBluetooth deliberately filters the entire GAP service
+(`0x1800`, incl. `0x2A00`) out of service discovery; apps are expected to use
+`CBPeripheral.name` (a stale cache we explicitly rejected) or a custom
+characteristic. `bleak`'s CoreBluetooth backend builds its characteristic map
+from discovery, so `read_gatt_char("00002a00-…")` raises — which the code maps to
+a mismatch, i.e. the daemon would bind to *nothing* when `device` is set.
+
+**Resolution (implemented):** the firmware mirrors the full name onto a custom
+readable characteristic `4c41555a-…0005` under the existing data service (which
+CoreBluetooth *does* expose), and the daemon reads that instead of `0x2A00`. The
+name still lives in GAP `0x2A00` too (set via `NimBLEDevice::init`) for hosts
+that can read it; `…0005` is the macOS-reliable path. Everything else in §A/§B
+(NVS name, serial commands, `device` config, `skip_addr` convergence,
+`_preferred_uuid`) is unchanged. A `device` value no board could advertise now
+logs a distinct warning rather than waiting silently.
+
 ## Explicitly deferred (not in v1)
 
 - Rendering the board name on the on-device Bluetooth screen. Low effort on S3,

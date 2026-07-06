@@ -28,7 +28,10 @@ DEVICE_NAME = "Clawdmeter"
 SERVICE_UUID = "4c41555a-4465-7669-6365-000000000001"
 RX_CHAR_UUID = "4c41555a-4465-7669-6365-000000000002"
 REQ_CHAR_UUID = "4c41555a-4465-7669-6365-000000000004"
-DEVICE_NAME_CHAR_UUID = "00002a00-0000-1000-8000-00805f9b34fb"  # GAP Device Name
+# The board mirrors its full name onto this custom readable characteristic.
+# macOS CoreBluetooth hides the standard GAP Device Name (0x2A00) from apps, so
+# we cannot read it directly; the firmware exposes the name here instead.
+NAME_CHAR_UUID = "4c41555a-4465-7669-6365-000000000005"
 
 POLL_INTERVAL = 60
 TICK = 5
@@ -351,11 +354,28 @@ def normalize_device_name(raw: str) -> str | None:
     return f"Clawdmeter-{raw}"
 
 
+def _target_name_matchable(name: str) -> bool:
+    """True if `name` is a full board name a Clawdmeter could actually advertise.
+
+    The firmware only accepts a suffix of 1-7 chars from [A-Za-z0-9-], so a bare
+    "Clawdmeter" (unnamed board) or "Clawdmeter-<valid suffix>" can match; anything
+    else can never match any board (waits forever) and signals a config typo.
+    """
+    if name == "Clawdmeter":
+        return True
+    if not name.startswith("Clawdmeter-"):
+        return False
+    return re.fullmatch(r"[A-Za-z0-9-]{1,7}", name[len("Clawdmeter-"):]) is not None
+
+
 def read_target_device() -> str | None:
     """Read the `device` option (the board this Mac should bind to).
 
     Returns the full expected name (e.g. "Clawdmeter-mor"), or None when unset
-    so the daemon keeps its original first-match behavior.
+    so the daemon keeps its original first-match behavior. A configured name that
+    no board could advertise is returned as-is (so the daemon waits rather than
+    grabbing the wrong board) but logs a distinct warning so the user isn't left
+    staring at a silently idle daemon.
     """
     try:
         if CONFIG_FILE.exists():
@@ -365,7 +385,12 @@ def read_target_device() -> str | None:
                     continue
                 key, val = line.split("=", 1)
                 if key.strip().lower() == "device":
-                    return normalize_device_name(val)
+                    name = normalize_device_name(val)
+                    if name is not None and not _target_name_matchable(name):
+                        log(f"config 'device' = {name!r} can't match any board "
+                            f"(labels are [A-Za-z0-9-], max 7 chars) — waiting; "
+                            f"check your config")
+                    return name
     except OSError:
         pass
     return None
@@ -730,14 +755,14 @@ async def connect_and_run(target, stop_event: asyncio.Event, expected_name=None)
     log("Connected")
 
     # Confirm this is the board this machine is bound to. On macOS the
-    # peripheral name from retrieveConnected is often None, so read the GAP
-    # Device Name characteristic (0x2A00) live. On a mismatch, hang up and
-    # return False; main()'s macOS branch turns that into skip_addr so the
-    # next cycle picks the OTHER connected board. Match => remember this
-    # peripheral so we prefer it next time and stop churning.
+    # peripheral name from retrieveConnected is often None, and macOS hides the
+    # GAP Device Name (0x2A00), so read the board's custom name characteristic
+    # live. On a mismatch, hang up and return False; main()'s macOS branch turns
+    # that into skip_addr so the next cycle picks the OTHER connected board.
+    # Match => remember this peripheral so we prefer it next time and stop churning.
     if expected_name:
         try:
-            raw = await client.read_gatt_char(DEVICE_NAME_CHAR_UUID)
+            raw = await client.read_gatt_char(NAME_CHAR_UUID)
             actual = raw.decode("utf-8", "replace").rstrip("\x00")
         except (BleakError, asyncio.TimeoutError) as e:
             log(f"Could not read device name: {e}; skipping this peripheral")

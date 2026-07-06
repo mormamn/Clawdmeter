@@ -11,6 +11,10 @@
 #define RX_CHAR_UUID        "4c41555a-4465-7669-6365-000000000002"  // host writes here
 #define TX_CHAR_UUID        "4c41555a-4465-7669-6365-000000000003"  // device ack/nack notifies
 #define REQ_CHAR_UUID       "4c41555a-4465-7669-6365-000000000004"  // device-initiated refresh request
+#define NAME_CHAR_UUID      "4c41555a-4465-7669-6365-000000000005"  // host reads full device name here
+                                                                    // (macOS CoreBluetooth hides GAP 0x2A00,
+                                                                    // so the name is mirrored onto this
+                                                                    // custom characteristic for the daemon)
 
 #define BLE_BUF_SIZE 512
 
@@ -361,6 +365,17 @@ void ble_init(void) {
     );
     static ReqCallbacks reqCb;
     req_char->setCallbacks(&reqCb);
+
+    // Full device name mirrored onto a readable custom characteristic. macOS
+    // CoreBluetooth hides the GAP Device Name (0x2A00) from apps, so the host
+    // daemon reads the name here to tell two boards apart. The name only
+    // changes on a serial `name` command (which restarts), so setting it once
+    // at init is sufficient. device_name is already computed above.
+    NimBLECharacteristic* name_char = svc->createCharacteristic(
+        NAME_CHAR_UUID,
+        NIMBLE_PROPERTY::READ
+    );
+    name_char->setValue(reinterpret_cast<const uint8_t*>(device_name), strlen(device_name));
 
     svc->start();
     server->start();
