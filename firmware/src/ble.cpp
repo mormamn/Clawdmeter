@@ -4,7 +4,7 @@
 #include <NimBLEHIDDevice.h>
 #include <Preferences.h>
 
-#define DEVICE_NAME "Clawdmeter"
+#define DEVICE_NAME_BASE "Clawdmeter"
 
 // Custom GATT UUIDs for data channel
 #define SERVICE_UUID        "4c41555a-4465-7669-6365-000000000001"
@@ -138,6 +138,58 @@ static void claim_owner(const std::string& id) {
     prune_foreign_bonds();
 }
 
+// --- Configurable device name ----------------------------------------------
+// Optional user-set suffix persisted in NVS ("clawd"/"name"). Empty => the
+// board advertises as "Clawdmeter"; set => "Clawdmeter-<suffix>". The full
+// name is what NimBLEDevice::init() publishes as GAP char 0x2A00, which the
+// host daemon reads to tell two boards apart. Suffix is [A-Za-z0-9-], <=7
+// chars (keeps the 31-byte primary advertising packet from overflowing).
+static char device_name[24] = DEVICE_NAME_BASE;  // "Clawdmeter" + "-" + <=7 + NUL
+
+static bool name_char_ok(char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9') || c == '-';
+}
+
+static void compute_device_name() {
+    prefs.begin("clawd", true);
+    String suffix = prefs.getString("name", "");
+    prefs.end();
+    if (suffix.length() == 0) {
+        strncpy(device_name, DEVICE_NAME_BASE, sizeof(device_name) - 1);
+    } else {
+        snprintf(device_name, sizeof(device_name), "%s-%s",
+                 DEVICE_NAME_BASE, suffix.c_str());
+    }
+    device_name[sizeof(device_name) - 1] = '\0';
+}
+
+bool ble_set_name(const char* suffix) {
+    size_t n = strlen(suffix);
+    if (n == 0 || n > 7) {
+        Serial.println("BLE: name must be 1-7 chars of [A-Za-z0-9-]");
+        return false;
+    }
+    for (size_t i = 0; i < n; i++) {
+        if (!name_char_ok(suffix[i])) {
+            Serial.println("BLE: name must be 1-7 chars of [A-Za-z0-9-]");
+            return false;
+        }
+    }
+    prefs.begin("clawd", false);
+    prefs.putString("name", suffix);
+    prefs.end();
+    Serial.printf("BLE: name set to %s-%s\n", DEVICE_NAME_BASE, suffix);
+    return true;
+}
+
+void ble_clear_name(void) {
+    prefs.begin("clawd", false);
+    prefs.remove("name");
+    prefs.end();
+    Serial.println("BLE: name cleared (reverts to " DEVICE_NAME_BASE ")");
+}
+
 static void start_advertising() {
     NimBLEAdvertising* adv = NimBLEDevice::getAdvertising();
     adv->reset();
@@ -149,7 +201,7 @@ static void start_advertising() {
     //   GUI nearby-devices list.
     adv->setAppearance(HID_KEYBOARD);
     adv->addServiceUUID(NimBLEUUID((uint16_t)0x1812));  // BLE HID Service
-    adv->setName(DEVICE_NAME);
+    adv->setName(device_name);
     // Scan response carries the 128-bit custom data-service UUID for active
     // scanners (the host daemon scans actively).
     NimBLEAdvertisementData scanResp;
@@ -250,7 +302,8 @@ class ReqCallbacks : public NimBLECharacteristicCallbacks {
 };
 
 void ble_init(void) {
-    NimBLEDevice::init(DEVICE_NAME);
+    compute_device_name();
+    NimBLEDevice::init(device_name);
     NimBLEDevice::setSecurityAuth(true, false, true);  // bonding, no MITM, SC
 
     // Restore the locked owner (if any) and drop any stale non-owner bonds so
@@ -328,7 +381,7 @@ ble_state_t ble_get_state(void) {
 }
 
 const char* ble_get_device_name(void) {
-    return DEVICE_NAME;
+    return device_name;
 }
 
 const char* ble_get_mac_address(void) {

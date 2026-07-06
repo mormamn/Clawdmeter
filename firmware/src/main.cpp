@@ -174,6 +174,18 @@ static void check_serial_cmd() {
             cmd_buf[cmd_pos] = '\0';
             if (strcmp(cmd_buf, "screenshot") == 0) send_screenshot();
             else if (strcmp(cmd_buf, "buzz") == 0)  sound_hal_play_reset();
+            else if (strcmp(cmd_buf, "name") == 0) {
+                Serial.printf("name: %s\n", ble_get_device_name());
+            } else if (strcmp(cmd_buf, "name clear") == 0) {
+                ble_clear_name();
+                delay(50);
+                ESP.restart();
+            } else if (strncmp(cmd_buf, "name ", 5) == 0) {
+                if (ble_set_name(cmd_buf + 5)) {
+                    delay(50);
+                    ESP.restart();
+                }
+            }
             cmd_pos = 0;
         } else if (cmd_pos < CMD_BUF_SIZE - 1) {
             cmd_buf[cmd_pos++] = c;

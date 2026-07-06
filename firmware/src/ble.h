@@ -12,6 +12,8 @@ void ble_init(void);
 void ble_tick(void);
 ble_state_t ble_get_state(void);
 const char* ble_get_device_name(void);
+bool ble_set_name(const char* suffix);
+void ble_clear_name(void);
 const char* ble_get_mac_address(void);
 void ble_clear_bonds(void);
 bool ble_has_bonds(void);
