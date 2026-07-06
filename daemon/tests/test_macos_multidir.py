@@ -176,3 +176,43 @@ def test_discover_target_non_darwin_returns_none_without_pin(monkeypatch):
     monkeypatch.setattr(mod.sys, "platform", "linux")
     monkeypatch.setattr(mod, "load_cached_address", lambda: None)
     assert _run(mod.discover_target()) is None
+
+
+# ---------------------------------------------------------------------------
+# read_target_device / normalize_device_name
+# ---------------------------------------------------------------------------
+
+def test_normalize_device_name_bare_suffix():
+    assert mod.normalize_device_name("mor") == "Clawdmeter-mor"
+
+def test_normalize_device_name_full_name_passthrough():
+    assert mod.normalize_device_name("Clawdmeter-mor") == "Clawdmeter-mor"
+
+def test_normalize_device_name_bare_base_passthrough():
+    assert mod.normalize_device_name("Clawdmeter") == "Clawdmeter"
+
+def test_normalize_device_name_trims_and_blank_is_none():
+    assert mod.normalize_device_name("  bob ") == "Clawdmeter-bob"
+    assert mod.normalize_device_name("   ") is None
+
+def test_target_device_unset_returns_none(tmp_path, monkeypatch):
+    monkeypatch.setattr(mod, "CONFIG_FILE", tmp_path / "config")  # absent
+    assert mod.read_target_device() is None
+
+def test_target_device_key_absent_returns_none(tmp_path, monkeypatch):
+    cfg = tmp_path / "config"
+    cfg.write_text("clock = auto\nchime = on\n")
+    monkeypatch.setattr(mod, "CONFIG_FILE", cfg)
+    assert mod.read_target_device() is None
+
+def test_target_device_bare_suffix(tmp_path, monkeypatch):
+    cfg = tmp_path / "config"
+    cfg.write_text("device = mor   # my board\n")
+    monkeypatch.setattr(mod, "CONFIG_FILE", cfg)
+    assert mod.read_target_device() == "Clawdmeter-mor"
+
+def test_target_device_full_name(tmp_path, monkeypatch):
+    cfg = tmp_path / "config"
+    cfg.write_text("device = Clawdmeter-alice\n")
+    monkeypatch.setattr(mod, "CONFIG_FILE", cfg)
+    assert mod.read_target_device() == "Clawdmeter-alice"

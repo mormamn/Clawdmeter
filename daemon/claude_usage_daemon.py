@@ -328,6 +328,40 @@ def read_clock_setting() -> str:
     return "off"
 
 
+def normalize_device_name(raw: str) -> str | None:
+    """Normalize a configured board name to its full advertised form.
+
+    Accepts a bare suffix ("mor") or a full name ("Clawdmeter-mor"); returns
+    the full name. Blank -> None (unset).
+    """
+    raw = raw.strip()
+    if not raw:
+        return None
+    if raw.startswith("Clawdmeter"):
+        return raw
+    return f"Clawdmeter-{raw}"
+
+
+def read_target_device() -> str | None:
+    """Read the `device` option (the board this Mac should bind to).
+
+    Returns the full expected name (e.g. "Clawdmeter-mor"), or None when unset
+    so the daemon keeps its original first-match behavior.
+    """
+    try:
+        if CONFIG_FILE.exists():
+            for line in CONFIG_FILE.read_text().splitlines():
+                line = line.split("#", 1)[0].strip()
+                if "=" not in line:
+                    continue
+                key, val = line.split("=", 1)
+                if key.strip().lower() == "device":
+                    return normalize_device_name(val)
+    except OSError:
+        pass
+    return None
+
+
 def add_chime_field(payload: dict) -> None:
     """Add "c":1 to the payload when the config opts in, so the firmware may
     sound the session-reset chime. Omitted entirely when chime is off."""
