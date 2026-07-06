@@ -28,6 +28,7 @@ DEVICE_NAME = "Clawdmeter"
 SERVICE_UUID = "4c41555a-4465-7669-6365-000000000001"
 RX_CHAR_UUID = "4c41555a-4465-7669-6365-000000000002"
 REQ_CHAR_UUID = "4c41555a-4465-7669-6365-000000000004"
+DEVICE_NAME_CHAR_UUID = "00002a00-0000-1000-8000-00805f9b34fb"  # GAP Device Name
 
 POLL_INTERVAL = 60
 TICK = 5
@@ -190,6 +191,7 @@ def load_cached_address() -> str | None:
 # physical link, so this rides the existing HID connection — the keyboard
 # keeps working.
 _cb_manager = None  # reused CentralManagerDelegate (CoreBluetooth)
+_preferred_uuid = None  # macOS: peripheral UUID last confirmed as the target board
 
 
 async def _get_cb_manager():
@@ -241,13 +243,20 @@ async def retrieve_connected_macos(skip_addr: str | None = None):
     def _ok(p) -> bool:
         return not (skip_addr and p.identifier().UUIDString() == skip_addr)
 
-    # 1. Custom service — accept by service membership alone.
+    # 1. Custom service — accept by service membership alone. Prefer the
+    # peripheral we previously confirmed via 0x2A00 (see connect_and_run) so
+    # repeated cycles don't flip-flop between two boards; otherwise take the
+    # first candidate, same as before.
     custom = cm.retrieveConnectedPeripheralsWithServices_(
         [CBUUID.UUIDWithString_(SERVICE_UUID)]
     )
-    for p in custom or []:
-        if _ok(p):
-            return _wrap(p)
+    candidates = [p for p in (custom or []) if _ok(p)]
+    if _preferred_uuid:
+        for p in candidates:
+            if p.identifier().UUIDString() == _preferred_uuid:
+                return _wrap(p)
+    if candidates:
+        return _wrap(candidates[0])
 
     # 2. Generic HID service — require an exact name match.
     hid = cm.retrieveConnectedPeripheralsWithServices_(
@@ -681,13 +690,17 @@ def unpair_macos() -> bool:
     return True
 
 
-async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
+async def connect_and_run(target, stop_event: asyncio.Event, expected_name=None) -> bool:
     """Connect to a target and poll until disconnected or stopped.
 
     ``target`` is either an address string (Linux) or a BLEDevice carrying
     live CoreBluetooth details (macOS). Returns True if the connection was
     used successfully (so the caller keeps the cached address), False if the
     connection failed and the cache should be invalidated.
+
+    ``expected_name`` is the full configured board name (e.g.
+    "Clawdmeter-mor"), or None to keep the original first-match behavior with
+    no 0x2A00 read.
     """
     display = target if isinstance(target, str) else target.address
     log(f"Connecting to {display}...")
@@ -715,6 +728,31 @@ async def connect_and_run(target, stop_event: asyncio.Event) -> bool:
         return False
 
     log("Connected")
+
+    # Confirm this is the board this machine is bound to. On macOS the
+    # peripheral name from retrieveConnected is often None, so read the GAP
+    # Device Name characteristic (0x2A00) live. On a mismatch, hang up and
+    # return False; main()'s macOS branch turns that into skip_addr so the
+    # next cycle picks the OTHER connected board. Match => remember this
+    # peripheral so we prefer it next time and stop churning.
+    if expected_name:
+        try:
+            raw = await client.read_gatt_char(DEVICE_NAME_CHAR_UUID)
+            actual = raw.decode("utf-8", "replace").rstrip("\x00")
+        except (BleakError, asyncio.TimeoutError) as e:
+            log(f"Could not read device name: {e}; skipping this peripheral")
+            actual = None
+        if actual != expected_name:
+            log(f"Wrong board {actual!r} (want {expected_name!r}), skipping")
+            try:
+                await client.disconnect()
+            except BleakError:
+                pass
+            return False
+        global _preferred_uuid
+        _preferred_uuid = target if isinstance(target, str) else target.address
+        log(f"Confirmed target board {expected_name!r}")
+
     session = Session(client)
     await session.setup_refresh_subscription()
 
@@ -781,7 +819,8 @@ async def main() -> None:
             continue
 
         addr = target if isinstance(target, str) else target.address
-        ok = await connect_and_run(target, stop_event)
+        expected_name = read_target_device()
+        ok = await connect_and_run(target, stop_event, expected_name=expected_name)
         if not ok:
             if sys.platform == "darwin":
                 # No string cache to drop; instead skip this stale handle on

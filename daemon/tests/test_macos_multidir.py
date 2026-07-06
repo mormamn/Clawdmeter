@@ -7,7 +7,7 @@ Run: python -m pytest daemon/tests/test_macos_multidir.py -x -q
 """
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import daemon.claude_usage_daemon as mod
 from daemon.claude_usage_daemon import PlanSelector, read_config_dirs, read_token_for
@@ -216,3 +216,26 @@ def test_target_device_full_name(tmp_path, monkeypatch):
     cfg.write_text("device = Clawdmeter-alice\n")
     monkeypatch.setattr(mod, "CONFIG_FILE", cfg)
     assert mod.read_target_device() == "Clawdmeter-alice"
+
+
+# ---------------------------------------------------------------------------
+# connect_and_run — GATT 0x2A00 board confirmation
+# ---------------------------------------------------------------------------
+
+def test_connect_wrong_board_name_returns_false(monkeypatch):
+    """A connected peripheral whose 0x2A00 != expected is rejected (False)."""
+    client = MagicMock()
+    client.connect = AsyncMock()
+    client.disconnect = AsyncMock()
+    client.is_connected = True
+    # 0x2A00 reports a different board than we want.
+    client.read_gatt_char = AsyncMock(return_value=b"Clawdmeter-other")
+
+    monkeypatch.setattr(mod, "BleakClient", lambda *a, **k: client)
+    stop = asyncio.Event()
+
+    ok = _run(mod.connect_and_run("UUID-1", stop, expected_name="Clawdmeter-mor"))
+
+    assert ok is False
+    client.read_gatt_char.assert_awaited_once_with(mod.DEVICE_NAME_CHAR_UUID)
+    client.disconnect.assert_awaited()  # we hung up on the wrong board
