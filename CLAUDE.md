@@ -160,6 +160,14 @@ Bash daemon (`daemon/claude-usage-daemon.sh`) reads OAuth token, polls Anthropic
 - Connects by name (`"Clawdmeter"`) on first run, caches resolved MAC at `~/.config/claude-usage-monitor/ble-address`. ESP32 BLE addresses are factory-burned per-chip, so swapping any board invalidates the cache.
 - On connect failure: cache is dropped AND device is removed from bluez (`bluetoothctl remove`) so the next scan won't re-pick a dead MAC. Multi-candidate scans pick `head -1` and let the failure cycle converge.
 - `POLL_INTERVAL=60`, `TICK=5`. Inner loop wakes every 5s to detect disconnects fast; polls Anthropic when 60s elapsed OR when ESP fires a refresh request.
+- **Per-board naming (multi-device offices).** A board can be named over USB
+  serial (`name <label>` → advertises `Clawdmeter-<label>`, `name` to print,
+  `name clear` to reset; label is `[A-Za-z0-9-]`, ≤7 chars, persisted in NVS,
+  full name published as GAP `0x2A00`). Each Mac's daemon binds to one board via
+  the `device = <label>` config key: on connect it reads `0x2A00` and, on a
+  mismatch, disconnects and reuses the `skip_addr` retry path to converge on the
+  right board (and waits, rather than grabbing the wrong one, if its board is
+  absent). Unset `device` = original first-match behavior. macOS-only today.
 
 **GATT characteristics on service `4c41555a-...0001`:**
 
